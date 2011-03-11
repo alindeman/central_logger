@@ -11,7 +11,7 @@ module CentralLogger
     PRODUCTION_COLLECTION_SIZE = 250.megabytes
     DEFAULT_COLLECTION_SIZE = 100.megabytes
     # Looks for configuration files in this order
-    CONFIGURATION_FILES = ["central_logger.yml", "mongoid.yml", "database.yml"]
+    CONFIGURATION_FILES = ["central_logger.yml", "mongoid.yml", "mongo.yml", "database.yml"]
     LOG_LEVEL_SYM = [:debug, :info, :warn, :error, :fatal, :unknown]
 
     attr_reader :db_configuration, :mongo_connection, :mongo_collection_name, :mongo_collection
