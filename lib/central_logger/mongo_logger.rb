@@ -1,15 +1,14 @@
 require 'erb'
 require 'mongo'
-require 'active_support'
-require 'active_support/core_ext'
 require 'central_logger/replica_set_helper'
 
 module CentralLogger
   class MongoLogger < ActiveSupport::BufferedLogger
     include ReplicaSetHelper
 
-    PRODUCTION_COLLECTION_SIZE = 250.megabytes
-    DEFAULT_COLLECTION_SIZE = 100.megabytes
+    MB = 2 ** 20
+    PRODUCTION_COLLECTION_SIZE = 256 * MB
+    DEFAULT_COLLECTION_SIZE = 128 * MB
     # Looks for configuration files in this order
     CONFIGURATION_FILES = ["central_logger.yml", "mongoid.yml", "mongo.yml", "database.yml"]
     LOG_LEVEL_SYM = [:debug, :info, :warn, :error, :fatal, :unknown]
@@ -19,8 +18,15 @@ module CentralLogger
     def initialize(options={})
       path = options[:path] || File.join(Rails.root, "log/#{Rails.env}.log")
       level = options[:level] || DEBUG
-      super(path, level)
       internal_initialize
+      if disable_file_logging?
+        @level = level
+        @buffer        = {}
+        @auto_flushing = 1
+        @guard = Mutex.new
+      else
+        super(path, level)
+      end
     rescue => e
       # should use a config block for this
       Rails.env.production? ? (raise e) : (puts "Using BufferedLogger due to exception: " + e.message)
@@ -37,12 +43,13 @@ module CentralLogger
     end
 
     def add(severity, message = nil, progname = nil, &block)
-      super
       if @level <= severity && message.present? && @mongo_record.present?
-        # remove Rails colorization to get the actual message
-        message.gsub!(/(\e(\[([\d;]*[mz]?))?)?/, '').strip! if logging_colorized?
-        @mongo_record[:messages][LOG_LEVEL_SYM[severity]] << message
+        # do not modify the original message used by the buffered logger
+        msg = logging_colorized? ? message.to_s.gsub(/(\e(\[([\d;]*[mz]?))?)?/, '').strip : message
+        @mongo_record[:messages][LOG_LEVEL_SYM[severity]] << msg
       end
+      # may modify the original message
+      disable_file_logging? ? message : super
     end
 
     # Drop the capped_collection and recreate it
@@ -85,6 +92,10 @@ module CentralLogger
         configure
         connect
         check_for_collection
+      end
+
+      def disable_file_logging?
+        @db_configuration.fetch('disable_file_logging', false)
       end
 
       def configure
@@ -131,8 +142,7 @@ module CentralLogger
 
       def connect
         @mongo_connection ||= Mongo::Connection.new(@db_configuration['host'],
-                                                    @db_configuration['port'],
-                                                    :auto_reconnect => true).db(@db_configuration['database'])
+                                                    @db_configuration['port']).db(@db_configuration['database'])
 
         if @db_configuration['username'] && @db_configuration['password']
           # the driver stores credentials in case reconnection is required
